@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>808 LAB — PALACIOS Social Manager</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -207,18 +209,54 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+/* LOGIN */
+.login-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:500}
+.login-box{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:32px 40px;text-align:center;max-width:360px;width:100%}
+.login-logo{font-size:13px;font-weight:600;letter-spacing:.12em;color:var(--text2);margin-bottom:16px}
+.login-logo em{color:var(--text);font-style:normal}
+.login-title{font-size:16px;font-weight:500;color:var(--text);margin-bottom:6px}
+.login-sub{font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.5}
+.login-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit}
+.login-btn:hover{border-color:#555}
+.login-err{font-size:11px;color:#f87171;margin-top:10px;display:none}
+.sync-dot{width:6px;height:6px;border-radius:50%;background:var(--text3);display:inline-block}
+.sync-dot.ok{background:#22c55e}
+.sync-dot.busy{background:#f59e0b;animation:pulse 1s infinite}
+.sync-dot.err{background:#ef4444}
+.user-chip{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);background:var(--surface2);border:1px solid var(--border2);border-radius:20px;padding:3px 10px;cursor:pointer}
+.user-chip:hover{border-color:#555}
 </style>
 </head>
 <body>
 <div class="app" id="app">
+  <!-- LOGIN SCREEN -->
+  <div class="login-screen" id="login-screen">
+    <div class="login-box">
+      <div class="login-logo"><em>808</em> LAB</div>
+      <div class="login-title">PALACIOS Social Manager</div>
+      <div class="login-sub">Connecte-toi avec ton compte Google pour accéder à l'app et synchroniser les données.</div>
+      <button class="login-btn" onclick="signIn()">
+        <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 002.38-5.88c0-.57-.05-.66-.15-1.18z"/><path fill="#34A853" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2.04c-.71.48-1.63.77-2.7.77a4.79 4.79 0 01-4.52-3.3H1.83v2.07A8 8 0 008.98 17z"/><path fill="#FBBC05" d="M4.46 10.49a4.8 4.8 0 010-3.04V5.38H1.83a8 8 0 000 7.18l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.58c1.22 0 2.31.42 3.17 1.25l2.38-2.38A8 8 0 001.83 5.38L4.46 7.45A4.79 4.79 0 018.98 3.58z"/></svg>
+        Se connecter avec Google
+      </button>
+      <div class="login-err" id="login-err">Erreur de connexion — réessaie.</div>
+    </div>
+  </div>
+
   <div class="topbar">
     <div class="topbar-left">
       <span class="logo"><em>808</em> LAB</span>
       <div class="client-chip"><i class="ti ti-building" style="font-size:12px"></i> PALACIOS</div>
     </div>
     <div class="topbar-right">
+      <span class="sync-dot" id="sync-dot" title="Synchronisation"></span>
       <span class="role-chip" id="role-chip">ADMIN</span>
       <button class="btn-toggle" id="role-toggle" onclick="toggleRole()">Vue client</button>
+      <div class="user-chip" id="user-chip" onclick="signOut()" title="Se déconnecter" style="display:none">
+        <i class="ti ti-user" style="font-size:12px"></i>
+        <span id="user-name"></span>
+        <i class="ti ti-logout" style="font-size:11px;opacity:.5"></i>
+      </div>
     </div>
   </div>
   <div class="nav" id="main-nav">
@@ -355,17 +393,138 @@ const DI=[
   {id:'i3',title:'De la feuille à l\'installation — le process en 5 étapes',axe:'coulisses',nets:['Instagram','Pinterest'],format:'Carrousel',status:'approved',brief:'Décomposer le parcours client PALACIOS : brief → plans → fabrication → livraison → pose.',ai:false,pushed:false,comments:[{role:'client',text:'Validé !',date:'10 juin'}]}
 ];
 
+// GOOGLE DRIVE CONFIG
+const CLIENT_ID='448100248657-e06u41equqp9je0esec9ks4vfie3n8st.apps.googleusercontent.com';
+const FOLDER_ID='1XG1sFzNc6yh_0baeDOVSxHb8pHMNC8YK';
+const SCOPES='https://www.googleapis.com/auth/drive.file';
+let gToken=null;let dataFileId=null;let saveTimer=null;
+
+function setSyncDot(state){
+  const d=document.getElementById('sync-dot');
+  if(!d)return;
+  d.className='sync-dot'+{ok:' ok',busy:' busy',err:' err','':' '}[state]||'';
+}
+
+async function signIn(){
+  setSyncDot('busy');
+  try{
+    await new Promise((res,rej)=>{
+      google.accounts.oauth2.initTokenClient({
+        client_id:CLIENT_ID,
+        scope:SCOPES,
+        callback:(r)=>{if(r.error){rej(r);}else{gToken=r.access_token;res(r);}}
+      }).requestAccessToken();
+    });
+    // get user info
+    const ui=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+gToken}});
+    const ud=await ui.json();
+    document.getElementById('user-name').textContent=ud.given_name||ud.email;
+    document.getElementById('user-chip').style.display='flex';
+    document.getElementById('login-screen').style.display='none';
+    await loadFromDrive();
+  }catch(e){
+    console.error(e);
+    document.getElementById('login-err').style.display='block';
+    setSyncDot('err');
+  }
+}
+
+function signOut(){
+  if(!confirm('Se déconnecter ?'))return;
+  gToken=null;dataFileId=null;
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('user-chip').style.display='none';
+  setSyncDot('');
+}
+
+async function findOrCreateFile(){
+  // search for existing data file in folder
+  const q=`name='palacios-data.json' and '${FOLDER_ID}' in parents and trashed=false`;
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`,{headers:{Authorization:'Bearer '+gToken}});
+  const d=await r.json();
+  if(d.files&&d.files.length>0){
+    dataFileId=d.files[0].id;
+    return false; // existing
+  }
+  // create new file
+  const meta={name:'palacios-data.json',parents:[FOLDER_ID]};
+  const init={cards:DC,ideas:DI};
+  const form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+  form.append('file',new Blob([JSON.stringify(init)],{type:'application/json'}));
+  const cr=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{method:'POST',headers:{Authorization:'Bearer '+gToken},body:form});
+  const cd=await cr.json();
+  dataFileId=cd.id;
+  return true; // created
+}
+
+async function loadFromDrive(){
+  setSyncDot('busy');
+  try{
+    await findOrCreateFile();
+    const r=await fetch(`https://www.googleapis.com/drive/v3/files/${dataFileId}?alt=media`,{headers:{Authorization:'Bearer '+gToken}});
+    const d=await r.json();
+    S.cards=d.cards&&d.cards.length?d.cards:DC;
+    S.ideas=d.ideas&&d.ideas.length?d.ideas:DI;
+    setSyncDot('ok');
+    render();
+    // also cache locally
+    localStorage.setItem('pal_cards2',JSON.stringify(S.cards));
+    localStorage.setItem('pal_ideas2',JSON.stringify(S.ideas));
+  }catch(e){
+    console.error('Drive load error:',e);
+    setSyncDot('err');
+    // fallback to localStorage
+    const r1=localStorage.getItem('pal_cards2');
+    const r2=localStorage.getItem('pal_ideas2');
+    S.cards=r1?JSON.parse(r1):DC;
+    S.ideas=r2?JSON.parse(r2):DI;
+    render();
+  }
+}
+
+async function saveToDrive(){
+  if(!gToken||!dataFileId){
+    // fallback localStorage only
+    localStorage.setItem('pal_cards2',JSON.stringify(S.cards));
+    localStorage.setItem('pal_ideas2',JSON.stringify(S.ideas));
+    return;
+  }
+  setSyncDot('busy');
+  try{
+    const data={cards:S.cards,ideas:S.ideas,updated:new Date().toISOString()};
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${dataFileId}?uploadType=media`,{
+      method:'PATCH',
+      headers:{Authorization:'Bearer '+gToken,'Content-Type':'application/json'},
+      body:JSON.stringify(data)
+    });
+    setSyncDot('ok');
+    // also cache locally
+    localStorage.setItem('pal_cards2',JSON.stringify(S.cards));
+    localStorage.setItem('pal_ideas2',JSON.stringify(S.ideas));
+  }catch(e){
+    console.error('Drive save error:',e);
+    setSyncDot('err');
+  }
+}
+
 async function load(){
+  // try localStorage while not yet connected
   try{
     const r1=localStorage.getItem('pal_cards2');
     const r2=localStorage.getItem('pal_ideas2');
     S.cards=r1?JSON.parse(r1):DC;
     S.ideas=r2?JSON.parse(r2):DI;
   }catch(e){S.cards=DC;S.ideas=DI;}
-  if(!S.cards.length)S.cards=DC;if(!S.ideas.length)S.ideas=DI;
-  saveAll();
+  if(!S.cards.length)S.cards=DC;
+  if(!S.ideas.length)S.ideas=DI;
 }
+
 async function saveAll(){
+  // debounce — wait 800ms before saving to avoid hammering Drive
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>saveToDrive(),800);
+  // immediate localStorage
   try{localStorage.setItem('pal_cards2',JSON.stringify(S.cards));localStorage.setItem('pal_ideas2',JSON.stringify(S.ideas));}catch(e){}
 }
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('visible');setTimeout(()=>t.classList.remove('visible'),2200);}
